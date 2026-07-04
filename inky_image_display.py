@@ -17,8 +17,7 @@ REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", "30"))
 APOD_LOOKBACK_DAYS = int(os.environ.get("APOD_LOOKBACK_DAYS", "45"))
 MAX_ATTEMPTS = 10
 BUTTON_A_GPIO = int(os.environ.get("INKY_BUTTON_A_GPIO", "5"))
-CAPTION_MAX_CHARS = int(os.environ.get("CAPTION_MAX_CHARS", "220"))
-CAPTION_MAX_HEIGHT_RATIO = float(os.environ.get("CAPTION_MAX_HEIGHT_RATIO", "0.35"))
+CAPTION_MAX_CHARS = int(os.environ.get("CAPTION_MAX_CHARS", "120"))
 
 display = auto()
 WIDTH, HEIGHT = display.resolution
@@ -114,61 +113,26 @@ def text_size(draw: ImageDraw.ImageDraw, text: str, font) -> tuple[int, int]:
     return bbox[2] - bbox[0], bbox[3] - bbox[1]
 
 
-def wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:
-    lines = []
-
-    for paragraph in text.splitlines() or [""]:
-        words = paragraph.split()
-        if not words:
-            lines.append("")
-            continue
-
-        line = words[0]
-        for word in words[1:]:
-            candidate = f"{line} {word}"
-            if text_size(draw, candidate, font)[0] <= max_width:
-                line = candidate
-            else:
-                lines.append(line)
-                line = word
-        lines.append(line)
-
-    return lines
-
-
-def truncate_to_fit(lines: list[str], max_lines: int) -> list[str]:
-    if len(lines) <= max_lines:
-        return lines
-
-    visible = lines[:max_lines]
-    visible[-1] = visible[-1].rstrip(". ") + "..."
-    return visible
-
-
 def add_caption(img: Image.Image, apod) -> Image.Image:
     img = img.convert("RGB")
     draw = ImageDraw.Draw(img)
 
-    font_size = max(16, min(26, WIDTH // 34))
+    font_size = max(12, min(18, WIDTH // 48))
     font = load_caption_font(font_size)
-    padding = max(12, WIDTH // 45)
-    line_gap = max(4, font_size // 4)
-    box_width = WIDTH
+    padding = max(8, WIDTH // 80)
     max_text_width = WIDTH - (padding * 2)
-    max_box_height = max(110, int(HEIGHT * CAPTION_MAX_HEIGHT_RATIO))
 
-    date_line = str(apod["date"])
+    date_text = str(apod["date"])
     description = apod.get("description") or apod.get("title", "")
     description = " ".join(description.split())
     if len(description) > CAPTION_MAX_CHARS:
         description = description[: CAPTION_MAX_CHARS - 3].rstrip(". ,;:") + "..."
+    caption = f"{date_text} - {description}"
 
-    lines = [date_line] + wrap_text(draw, description, font, max_text_width)
-    line_height = text_size(draw, "Ag", font)[1] + line_gap
-    max_lines = max(2, (max_box_height - (padding * 2)) // line_height)
-    lines = truncate_to_fit(lines, max_lines)
+    while text_size(draw, caption, font)[0] > max_text_width and len(caption) > len(date_text) + 6:
+        caption = caption[:-4].rstrip(". ,;:-") + "..."
 
-    text_height = (len(lines) * line_height) - line_gap
+    text_height = text_size(draw, "Ag", font)[1]
     box_height = text_height + (padding * 2)
     x0 = 0
     y0 = max(0, HEIGHT - box_height)
@@ -176,12 +140,10 @@ def add_caption(img: Image.Image, apod) -> Image.Image:
     y1 = HEIGHT - 1
 
     draw.rectangle((x0, y0, x1, y1), fill=(255, 255, 255))
-    draw.line((x0, y0, x1, y0), fill=(0, 0, 0), width=3)
+    draw.line((x0, y0, x1, y0), fill=(0, 0, 0), width=2)
 
     text_y = y0 + padding
-    for line in lines:
-        draw.text((x0 + padding, text_y), line, fill=(0, 0, 0), font=font)
-        text_y += line_height
+    draw.text((x0 + padding, text_y), caption, fill=(0, 0, 0), font=font)
 
     return img
 

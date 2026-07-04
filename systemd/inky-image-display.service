@@ -8,6 +8,7 @@ Type=simple
 User=misterlamp
 WorkingDirectory=/home/misterlamp
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/home/misterlamp/.config/inky-image-display.env
 ExecStart=/home/misterlamp/.virtualenvs/pimoroni/bin/python /home/misterlamp/inky_image_display.py
 Restart=always
 RestartSec=15
