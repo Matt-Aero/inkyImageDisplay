@@ -55,7 +55,7 @@ Then SSH into the Pi and install the service:
 ```bash
 mkdir -p ~/.config
 chmod 700 ~/.config
-printf 'REFRESH_SECONDS=30\nINKY_BUTTON_GPIO_PINS=5,6,16,24\n' > ~/.config/inky-image-display.env
+printf 'REFRESH_SECONDS=30\nINKY_BUTTON_GPIO_PINS=5\n' > ~/.config/inky-image-display.env
 chmod 600 ~/.config/inky-image-display.env
 
 sudo mv ~/inky-image-display.service /etc/systemd/system/inky-image-display.service
@@ -74,6 +74,6 @@ Optional environment variables:
 
 - `NASA_IMAGE_OF_DAY_FEED`: NASA Image of the Day RSS feed URL
 - `REFRESH_SECONDS`: image rotation interval, defaults to `30`
-- `INKY_BUTTON_GPIO_PINS`: comma-separated BCM GPIO pins that advance the image, defaults to `5,6,16,24`
+- `INKY_BUTTON_GPIO_PINS`: comma-separated BCM GPIO pins that advance the image, defaults to `5`
 - `INKY_BUTTON_A_GPIO`: legacy single BCM GPIO pin setting, used only if `INKY_BUTTON_GPIO_PINS` is unset
 - `CAPTION_MAX_CHARS`: maximum title characters in the caption, defaults to `80`

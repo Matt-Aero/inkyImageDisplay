@@ -21,7 +21,7 @@ REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", "30"))
 MAX_ATTEMPTS = 10
 BUTTON_GPIO_PINS = os.environ.get(
     "INKY_BUTTON_GPIO_PINS",
-    os.environ.get("INKY_BUTTON_A_GPIO", "5,6,16,24"),
+    os.environ.get("INKY_BUTTON_A_GPIO", "5"),
 )
 CAPTION_MAX_CHARS = int(os.environ.get("CAPTION_MAX_CHARS", "80"))
 
