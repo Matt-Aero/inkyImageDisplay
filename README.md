@@ -9,6 +9,7 @@ The script:
 - overlays the image date and title in a small single-line caption
 - advances every 30 seconds
 - advances early when button A is pressed
+- prefers smaller feed thumbnails to keep memory use low on Raspberry Pi
 
 ## Raspberry Pi Setup
 

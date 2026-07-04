@@ -9,7 +9,7 @@ from email.utils import parsedate_to_datetime
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from inky.auto import auto
 
 NASA_APP_NAME = os.environ.get("NASA_APP_NAME", "raspberrypi-image-frame")
@@ -51,7 +51,13 @@ def fetch_text(url: str) -> str:
 
 def fetch_image(url: str) -> Image.Image:
     with make_request(url) as response:
-        return Image.open(io.BytesIO(response.read())).convert("RGBA")
+        data = io.BytesIO(response.read())
+
+    img = Image.open(data)
+    img.draft("RGB", (WIDTH * 2, HEIGHT * 2))
+    img = ImageOps.exif_transpose(img)
+    img.thumbnail((WIDTH, HEIGHT), Image.LANCZOS)
+    return img.convert("RGB")
 
 
 def first_text(item: ET.Element, tag: str) -> str:
@@ -69,16 +75,30 @@ def format_feed_date(value: str) -> str:
 
 
 def image_url_from_item(item: ET.Element) -> str | None:
+    thumbnail_url = None
+    fallback_url = None
+
+    for element in item.iter():
+        tag = element.tag.rsplit("}", 1)[-1].lower()
+        url = element.attrib.get("url")
+        if not url:
+            continue
+        if tag == "thumbnail":
+            thumbnail_url = url
+        elif re.search(r"\.(jpe?g|png)(\?|$)", url, re.IGNORECASE):
+            fallback_url = fallback_url or url
+
+    if thumbnail_url:
+        return thumbnail_url
+
     for enclosure in item.findall("enclosure"):
         url = enclosure.attrib.get("url")
         mime_type = enclosure.attrib.get("type", "")
         if url and mime_type.startswith("image/"):
             return url
 
-    for element in item.iter():
-        url = element.attrib.get("url")
-        if url and re.search(r"\.(jpe?g|png)(\?|$)", url, re.IGNORECASE):
-            return url
+    if fallback_url:
+        return fallback_url
 
     html = first_text(item, "description")
     match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', html, re.IGNORECASE)
@@ -113,13 +133,10 @@ def fetch_recent_images():
 
 
 def fit_image_contain(img: Image.Image, target_w: int, target_h: int) -> Image.Image:
-    img = img.copy()
-    img.thumbnail((target_w, target_h), Image.LANCZOS)
-
-    canvas = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 255))
+    canvas = Image.new("RGB", (target_w, target_h), (0, 0, 0))
     x = (target_w - img.width) // 2
     y = (target_h - img.height) // 2
-    canvas.paste(img, (x, y), img)
+    canvas.paste(img, (x, y))
     return canvas
 
 
