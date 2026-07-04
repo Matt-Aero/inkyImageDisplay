@@ -1,0 +1,16 @@
+[Unit]
+Description=NASA APOD Inky image display
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=misterlamp
+WorkingDirectory=/home/misterlamp
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/misterlamp/.virtualenvs/pimoroni/bin/python /home/misterlamp/inky_image_display.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

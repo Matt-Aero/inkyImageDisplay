@@ -6,7 +6,7 @@ The script:
 
 - fetches recent NASA APOD image entries
 - displays each image full-screen on the Inky display
-- overlays the APOD date and description in the bottom-left corner
+- overlays the APOD date and description in a visible bottom caption band
 - advances every 30 seconds
 - advances early when button A is pressed
 
@@ -41,6 +41,30 @@ source ~/.virtualenvs/pimoroni/bin/activate
 python ~/inky_image_display.py
 ```
 
+## Start on Boot
+
+Copy the script and service file onto the Pi:
+
+```bash
+scp inky_image_display.py misterlamp@192.168.87.214:~/inky_image_display.py
+scp systemd/inky-image-display.service misterlamp@192.168.87.214:~/inky-image-display.service
+```
+
+Then SSH into the Pi and install the service:
+
+```bash
+sudo mv ~/inky-image-display.service /etc/systemd/system/inky-image-display.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now inky-image-display.service
+```
+
+Check the service:
+
+```bash
+systemctl status inky-image-display.service
+journalctl -u inky-image-display.service -f
+```
+
 Optional environment variables:
 
 - `NASA_API_KEY`: NASA API key, defaults to `DEMO_KEY`
@@ -48,3 +72,4 @@ Optional environment variables:
 - `APOD_LOOKBACK_DAYS`: recent APOD window, defaults to `45`
 - `INKY_BUTTON_A_GPIO`: BCM GPIO pin for button A, defaults to `5`
 - `CAPTION_MAX_CHARS`: maximum description characters in the caption, defaults to `220`
+- `CAPTION_MAX_HEIGHT_RATIO`: maximum fraction of screen height used by the caption, defaults to `0.35`

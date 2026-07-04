@@ -18,6 +18,7 @@ APOD_LOOKBACK_DAYS = int(os.environ.get("APOD_LOOKBACK_DAYS", "45"))
 MAX_ATTEMPTS = 10
 BUTTON_A_GPIO = int(os.environ.get("INKY_BUTTON_A_GPIO", "5"))
 CAPTION_MAX_CHARS = int(os.environ.get("CAPTION_MAX_CHARS", "220"))
+CAPTION_MAX_HEIGHT_RATIO = float(os.environ.get("CAPTION_MAX_HEIGHT_RATIO", "0.35"))
 
 display = auto()
 WIDTH, HEIGHT = display.resolution
@@ -145,16 +146,16 @@ def truncate_to_fit(lines: list[str], max_lines: int) -> list[str]:
 
 
 def add_caption(img: Image.Image, apod) -> Image.Image:
-    img = img.convert("RGBA")
+    img = img.convert("RGB")
     draw = ImageDraw.Draw(img)
 
-    font_size = max(14, min(22, WIDTH // 38))
+    font_size = max(16, min(26, WIDTH // 34))
     font = load_caption_font(font_size)
-    padding = max(10, WIDTH // 55)
+    padding = max(12, WIDTH // 45)
     line_gap = max(4, font_size // 4)
-    box_width = min(WIDTH - (padding * 2), max(WIDTH // 2, 360))
-    max_text_width = box_width - (padding * 2)
-    max_box_height = max(90, HEIGHT // 3)
+    box_width = WIDTH
+    max_text_width = WIDTH - (padding * 2)
+    max_box_height = max(110, int(HEIGHT * CAPTION_MAX_HEIGHT_RATIO))
 
     date_line = str(apod["date"])
     description = apod.get("description") or apod.get("title", "")
@@ -169,17 +170,17 @@ def add_caption(img: Image.Image, apod) -> Image.Image:
 
     text_height = (len(lines) * line_height) - line_gap
     box_height = text_height + (padding * 2)
-    x0 = padding
-    y0 = HEIGHT - box_height - padding
-    x1 = x0 + box_width
-    y1 = y0 + box_height
+    x0 = 0
+    y0 = max(0, HEIGHT - box_height)
+    x1 = WIDTH - 1
+    y1 = HEIGHT - 1
 
-    draw.rectangle((x0, y0, x1, y1), fill=(255, 255, 255, 235))
-    draw.rectangle((x0, y0, x1, y1), outline=(0, 0, 0, 255), width=2)
+    draw.rectangle((x0, y0, x1, y1), fill=(255, 255, 255))
+    draw.line((x0, y0, x1, y0), fill=(0, 0, 0), width=3)
 
     text_y = y0 + padding
     for line in lines:
-        draw.text((x0 + padding, text_y), line, fill=(0, 0, 0, 255), font=font)
+        draw.text((x0 + padding, text_y), line, fill=(0, 0, 0), font=font)
         text_y += line_height
 
     return img
@@ -221,7 +222,7 @@ def display_apod(apod):
     img = fit_image_contain(img, WIDTH, HEIGHT)
     img = add_caption(img, apod)
 
-    display.set_image(img)
+    display.set_image(img.convert("RGB"))
     display.show()
     print(f"Displayed: {apod['date']} - {apod['title']}")
 
