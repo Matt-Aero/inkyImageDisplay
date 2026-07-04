@@ -16,7 +16,7 @@ NASA_IMAGE_OF_DAY_FEED = os.environ.get(
     "NASA_IMAGE_OF_DAY_FEED",
     "https://www.nasa.gov/rss/dyn/lg_image_of_the_day.rss",
 )
-REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", "30"))
+REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", "600"))
 MAX_ATTEMPTS = 10
 BUTTON_A_GPIO = int(os.environ.get("INKY_BUTTON_A_GPIO", "5"))
 CAPTION_MAX_CHARS = int(os.environ.get("CAPTION_MAX_CHARS", "80"))
