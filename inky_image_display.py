@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
 import io
-import json
 import os
+import re
 import time
-from datetime import date, timedelta
+import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from PIL import Image, ImageDraw, ImageFont
 from inky.auto import auto
 
-NASA_API_KEY = os.environ.get("NASA_API_KEY", "DEMO_KEY")
-NASA_APP_NAME = os.environ.get("NASA_APP_NAME", "raspberrypi-apod-frame")
+NASA_APP_NAME = os.environ.get("NASA_APP_NAME", "raspberrypi-image-frame")
+NASA_IMAGE_OF_DAY_FEED = os.environ.get(
+    "NASA_IMAGE_OF_DAY_FEED",
+    "https://www.nasa.gov/rss/dyn/lg_image_of_the_day.rss",
+)
 REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", "30"))
-APOD_LOOKBACK_DAYS = int(os.environ.get("APOD_LOOKBACK_DAYS", "45"))
 MAX_ATTEMPTS = 10
 BUTTON_A_GPIO = int(os.environ.get("INKY_BUTTON_A_GPIO", "5"))
-CAPTION_MAX_CHARS = int(os.environ.get("CAPTION_MAX_CHARS", "120"))
+CAPTION_MAX_CHARS = int(os.environ.get("CAPTION_MAX_CHARS", "80"))
 
 display = auto()
 WIDTH, HEIGHT = display.resolution
@@ -27,16 +29,18 @@ def make_request(url: str):
     req = Request(
         url,
         headers={
-            "Accept": "application/json,image/jpeg,image/png,*/*",
+            "Accept": "application/rss+xml,application/xml,text/xml,image/jpeg,image/png,*/*",
             "User-Agent": NASA_APP_NAME,
         },
     )
     return urlopen(req, timeout=60)
 
 
-def fetch_json(url: str):
+def fetch_text(url: str) -> str:
     with make_request(url) as response:
-        return json.load(response)
+        body = response.read()
+        charset = response.headers.get_content_charset() or "utf-8"
+        return body.decode(charset, errors="replace")
 
 
 def fetch_image(url: str) -> Image.Image:
@@ -44,45 +48,62 @@ def fetch_image(url: str) -> Image.Image:
         return Image.open(io.BytesIO(response.read())).convert("RGBA")
 
 
-def fetch_recent_apods():
-    end = date.today()
-    start = end - timedelta(days=APOD_LOOKBACK_DAYS)
-    params = {
-        "api_key": NASA_API_KEY,
-        "start_date": start.isoformat(),
-        "end_date": end.isoformat(),
-        "thumbs": "true",
-    }
-    api_url = "https://api.nasa.gov/planetary/apod?" + urlencode(params)
-    print(f"NASA APOD URL: {api_url.replace(NASA_API_KEY, '***')}")
+def first_text(item: ET.Element, tag: str) -> str:
+    child = item.find(tag)
+    return (child.text or "").strip() if child is not None else ""
 
-    data = fetch_json(api_url)
-    if isinstance(data, dict):
-        data = [data]
 
-    apods = []
-    for item in data:
-        if item.get("media_type") != "image":
-            continue
+def format_feed_date(value: str) -> str:
+    if not value:
+        return "unknown date"
+    try:
+        return parsedate_to_datetime(value).date().isoformat()
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return value[:16]
 
-        image_url = item.get("hdurl") or item.get("url")
+
+def image_url_from_item(item: ET.Element) -> str | None:
+    for enclosure in item.findall("enclosure"):
+        url = enclosure.attrib.get("url")
+        mime_type = enclosure.attrib.get("type", "")
+        if url and mime_type.startswith("image/"):
+            return url
+
+    for element in item.iter():
+        url = element.attrib.get("url")
+        if url and re.search(r"\.(jpe?g|png)(\?|$)", url, re.IGNORECASE):
+            return url
+
+    html = first_text(item, "description")
+    match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', html, re.IGNORECASE)
+    if match:
+        return match.group(1)
+
+    return None
+
+
+def fetch_recent_images():
+    print(f"NASA Image of the Day feed: {NASA_IMAGE_OF_DAY_FEED}")
+    root = ET.fromstring(fetch_text(NASA_IMAGE_OF_DAY_FEED))
+    images = []
+
+    for item in root.findall(".//item"):
+        image_url = image_url_from_item(item)
         if not image_url:
             continue
 
-        apods.append(
+        images.append(
             {
-                "date": item.get("date", "unknown date"),
-                "title": item.get("title", "NASA Astronomy Picture of the Day"),
-                "description": item.get("explanation", ""),
+                "date": format_feed_date(first_text(item, "pubDate")),
+                "title": first_text(item, "title") or "NASA Image of the Day",
                 "image_url": image_url,
             }
         )
 
-    if not apods:
-        raise RuntimeError("NASA returned no recent APOD image entries.")
+    if not images:
+        raise RuntimeError("NASA returned no Image of the Day entries with image URLs.")
 
-    apods.sort(key=lambda item: item["date"], reverse=True)
-    return apods
+    return images
 
 
 def fit_image_contain(img: Image.Image, target_w: int, target_h: int) -> Image.Image:
@@ -123,11 +144,10 @@ def add_caption(img: Image.Image, apod) -> Image.Image:
     max_text_width = WIDTH - (padding * 2)
 
     date_text = str(apod["date"])
-    description = apod.get("description") or apod.get("title", "")
-    description = " ".join(description.split())
-    if len(description) > CAPTION_MAX_CHARS:
-        description = description[: CAPTION_MAX_CHARS - 3].rstrip(". ,;:") + "..."
-    caption = f"{date_text} - {description}"
+    title = " ".join(apod.get("title", "NASA Image of the Day").split())
+    if len(title) > CAPTION_MAX_CHARS:
+        title = title[: CAPTION_MAX_CHARS - 3].rstrip(". ,;:") + "..."
+    caption = f"{date_text} - {title}"
 
     while text_size(draw, caption, font)[0] > max_text_width and len(caption) > len(date_text) + 6:
         caption = caption[:-4].rstrip(". ,;:-") + "..."
@@ -139,11 +159,11 @@ def add_caption(img: Image.Image, apod) -> Image.Image:
     x1 = WIDTH - 1
     y1 = HEIGHT - 1
 
-    draw.rectangle((x0, y0, x1, y1), fill=(255, 255, 255))
-    draw.line((x0, y0, x1, y0), fill=(0, 0, 0), width=2)
+    draw.rectangle((x0, y0, x1, y1), fill=(0, 0, 0))
+    draw.line((x0, y0, x1, y0), fill=(255, 255, 255), width=1)
 
     text_y = y0 + padding
-    draw.text((x0 + padding, text_y), caption, fill=(0, 0, 0), font=font)
+    draw.text((x0 + padding, text_y), caption, fill=(255, 255, 255), font=font)
 
     return img
 
@@ -178,46 +198,46 @@ def wait_for_next_refresh(button) -> None:
         time.sleep(0.05)
 
 
-def display_apod(apod):
-    print(f"Fetching: {apod['date']} - {apod['title']}")
-    img = fetch_image(apod["image_url"])
+def display_nasa_image(nasa_image):
+    print(f"Fetching: {nasa_image['date']} - {nasa_image['title']}")
+    img = fetch_image(nasa_image["image_url"])
     img = fit_image_contain(img, WIDTH, HEIGHT)
-    img = add_caption(img, apod)
+    img = add_caption(img, nasa_image)
 
     display.set_image(img.convert("RGB"))
     display.show()
-    print(f"Displayed: {apod['date']} - {apod['title']}")
+    print(f"Displayed: {nasa_image['date']} - {nasa_image['title']}")
 
 
-def render_with_retries(apods, index: int) -> int:
+def render_with_retries(images, index: int) -> int:
     last_error = None
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        apod = apods[index % len(apods)]
+        nasa_image = images[index % len(images)]
         try:
-            display_apod(apod)
-            return (index + 1) % len(apods)
+            display_nasa_image(nasa_image)
+            return (index + 1) % len(images)
         except (HTTPError, URLError, OSError) as exc:
             last_error = exc
             print(f"Attempt {attempt}/{MAX_ATTEMPTS} failed: {exc}")
-            index = (index + 1) % len(apods)
+            index = (index + 1) % len(images)
             time.sleep(1)
 
-    raise RuntimeError(f"Could not fetch a valid APOD image: {last_error}")
+    raise RuntimeError(f"Could not fetch a valid NASA Image of the Day image: {last_error}")
 
 
 def main():
     button_a = setup_button_a()
-    apods = fetch_recent_apods()
+    images = fetch_recent_images()
     index = 0
 
     while True:
         try:
-            index = render_with_retries(apods, index)
+            index = render_with_retries(images, index)
             wait_for_next_refresh(button_a)
 
             if index == 0:
-                apods = fetch_recent_apods()
+                images = fetch_recent_images()
         except Exception as exc:
             print(f"Error: {exc}")
             time.sleep(REFRESH_SECONDS)

@@ -1,12 +1,12 @@
-# Inky Image Display
+# NASA Image of the Day Inky Display
 
-NASA Astronomy Picture of the Day display for a Raspberry Pi connected to a Pimoroni Inky e-ink display.
+NASA Image of the Day display for a Raspberry Pi connected to a Pimoroni Inky e-ink display.
 
 The script:
 
-- fetches recent NASA Astronomy Picture of the Day image entries
+- fetches recent NASA Image of the Day feed entries
 - displays each image full-screen on the Inky display
-- overlays the APOD date and description in a single bottom caption line
+- overlays the image date and title in a small single-line caption
 - advances every 30 seconds
 - advances early when button A is pressed
 
@@ -55,7 +55,7 @@ Then SSH into the Pi and install the service:
 ```bash
 mkdir -p ~/.config
 chmod 700 ~/.config
-printf 'NASA_API_KEY=your_api_key_here\n' > ~/.config/inky-image-display.env
+printf 'REFRESH_SECONDS=30\n' > ~/.config/inky-image-display.env
 chmod 600 ~/.config/inky-image-display.env
 
 sudo mv ~/inky-image-display.service /etc/systemd/system/inky-image-display.service
@@ -72,8 +72,7 @@ journalctl -u inky-image-display.service -f
 
 Optional environment variables:
 
-- `NASA_API_KEY`: NASA API key, defaults to `DEMO_KEY`
+- `NASA_IMAGE_OF_DAY_FEED`: NASA Image of the Day RSS feed URL
 - `REFRESH_SECONDS`: image rotation interval, defaults to `30`
-- `APOD_LOOKBACK_DAYS`: recent APOD window, defaults to `45`
 - `INKY_BUTTON_A_GPIO`: BCM GPIO pin for button A, defaults to `5`
-- `CAPTION_MAX_CHARS`: maximum description characters in the caption, defaults to `120`
+- `CAPTION_MAX_CHARS`: maximum title characters in the caption, defaults to `80`

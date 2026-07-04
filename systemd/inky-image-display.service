@@ -1,5 +1,5 @@
 [Unit]
-Description=NASA APOD Inky image display
+Description=NASA Image of the Day Inky display
 Wants=network-online.target
 After=network-online.target
 
