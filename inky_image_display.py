@@ -2,6 +2,7 @@
 import io
 import os
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
@@ -16,10 +17,15 @@ NASA_IMAGE_OF_DAY_FEED = os.environ.get(
     "NASA_IMAGE_OF_DAY_FEED",
     "https://www.nasa.gov/rss/dyn/lg_image_of_the_day.rss",
 )
-REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", "600"))
+REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", "30"))
 MAX_ATTEMPTS = 10
-BUTTON_A_GPIO = int(os.environ.get("INKY_BUTTON_A_GPIO", "5"))
+BUTTON_GPIO_PINS = os.environ.get(
+    "INKY_BUTTON_GPIO_PINS",
+    os.environ.get("INKY_BUTTON_A_GPIO", "5,6,16,24"),
+)
 CAPTION_MAX_CHARS = int(os.environ.get("CAPTION_MAX_CHARS", "80"))
+
+advance_requested = threading.Event()
 
 display = auto()
 WIDTH, HEIGHT = display.resolution
@@ -168,33 +174,54 @@ def add_caption(img: Image.Image, apod) -> Image.Image:
     return img
 
 
-def setup_button_a():
+def parse_button_pins() -> list[int]:
+    pins = []
+    for raw_pin in BUTTON_GPIO_PINS.split(","):
+        raw_pin = raw_pin.strip()
+        if not raw_pin:
+            continue
+        pins.append(int(raw_pin))
+    return pins
+
+
+def setup_buttons():
     try:
         from gpiozero import Button
-
-        button = Button(BUTTON_A_GPIO, pull_up=True, bounce_time=0.05)
-        print(f"Button A enabled on BCM GPIO {BUTTON_A_GPIO}")
-        return button
     except Exception as exc:
-        print(f"Button A disabled: {exc}")
-        return None
+        print(f"Buttons disabled: {exc}")
+        return []
+
+    buttons = []
+    enabled_pins = []
+    for pin in parse_button_pins():
+        try:
+            button = Button(pin, pull_up=True, bounce_time=0.08)
+            button.when_pressed = lambda pressed_pin=pin: request_advance(pressed_pin)
+            buttons.append(button)
+            enabled_pins.append(pin)
+        except Exception as exc:
+            print(f"Button on BCM GPIO {pin} disabled: {exc}")
+
+    if enabled_pins:
+        print(f"Buttons enabled on BCM GPIO pins: {', '.join(str(pin) for pin in enabled_pins)}")
+    else:
+        print("No buttons enabled.")
+
+    return buttons
 
 
-def button_pressed(button) -> bool:
-    if button is None:
-        return False
-    return bool(button.is_pressed)
+def request_advance(pin: int) -> None:
+    print(f"Button press detected on BCM GPIO {pin}")
+    advance_requested.set()
 
 
-def wait_for_next_refresh(button) -> None:
+def wait_for_next_refresh() -> None:
     deadline = time.monotonic() + REFRESH_SECONDS
-    was_pressed = False
+    advance_requested.clear()
 
     while time.monotonic() < deadline:
-        pressed = button_pressed(button)
-        if pressed and not was_pressed:
+        if advance_requested.is_set():
             return
-        was_pressed = pressed
         time.sleep(0.05)
 
 
@@ -227,14 +254,14 @@ def render_with_retries(images, index: int) -> int:
 
 
 def main():
-    button_a = setup_button_a()
+    buttons = setup_buttons()
     images = fetch_recent_images()
     index = 0
 
     while True:
         try:
             index = render_with_retries(images, index)
-            wait_for_next_refresh(button_a)
+            wait_for_next_refresh()
 
             if index == 0:
                 images = fetch_recent_images()
