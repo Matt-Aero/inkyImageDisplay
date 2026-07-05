@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import gc
 import html
-import json
 import os
 import random
 import re
@@ -23,9 +22,8 @@ NASA_FEED = os.environ.get(
 APP_NAME = os.environ.get("NASA_APP_NAME", "raspberrypi-image-frame")
 REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", "1200"))
 BUTTON_GPIO_PINS = os.environ.get("INKY_BUTTON_GPIO_PINS", "5")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
 MAX_ATTEMPTS = int(os.environ.get("MAX_ATTEMPTS", "10"))
-CAPTION_BOTTOM_MARGIN = int(os.environ.get("CAPTION_BOTTOM_MARGIN", "8"))
+CAPTION_BOTTOM_MARGIN = int(os.environ.get("CAPTION_BOTTOM_MARGIN", "16"))
 
 advance_requested = threading.Event()
 display = auto()
@@ -160,69 +158,8 @@ def fit_to_screen(img):
     return canvas
 
 
-def openai_caption(description):
-    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAPI_API_KEY")
-    if not api_key:
-        log("OpenAI caption skipped: OPENAI_API_KEY is not set")
-        return None
-
-    prompt = (
-        "Write a vivid image caption. Use no more than 8 words. "
-        "Return only the caption, with no quotes or punctuation-only lines.\n\n"
-        f"Image description: {description}"
-    )
-    body = json.dumps(
-        {
-            "model": OPENAI_MODEL,
-            "input": prompt,
-            "max_output_tokens": 24,
-            "temperature": 0.7,
-        }
-    ).encode("utf-8")
-
-    request = Request(
-        "https://api.openai.com/v1/responses",
-        data=body,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "User-Agent": APP_NAME,
-        },
-        method="POST",
-    )
-
-    with urlopen(request, timeout=30) as response:
-        result = json.loads(response.read().decode("utf-8"))
-
-    caption = response_text(result).strip().strip('"') or None
-    if caption:
-        log(f"OpenAI caption: {caption}")
-    return caption
-
-
-def response_text(result):
-    if result.get("output_text"):
-        return result["output_text"]
-
-    for item in result.get("output", []):
-        for content in item.get("content", []):
-            if content.get("type") == "output_text":
-                return content.get("text", "")
-
-    return ""
-
-
 def caption_for(image):
-    try:
-        caption = openai_caption(image["description"])
-    except Exception as exc:
-        log(f"OpenAI caption failed, using feed title: {exc}")
-        caption = None
-
-    if not caption:
-        caption = image["title"]
-
-    return f"{image['date']} | {caption} | {image['credit']}"
+    return f"{image['date']} - {image['title']} - Credit: {image['credit']}"
 
 
 def caption_font():

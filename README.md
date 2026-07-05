@@ -6,8 +6,7 @@ The script:
 
 - fetches recent NASA Image of the Day feed entries
 - displays each image full-screen on the Inky display
-- asks OpenAI for a short caption from the image description
-- displays the photo date, caption, and image credit on one line
+- displays the photo date, NASA title, and image credit on one line
 - advances every 20 minutes
 - advances early when button A is pressed
 - streams image downloads to a temp file before resizing for the display
@@ -58,7 +57,7 @@ Then SSH into the Pi and install the service:
 ```bash
 mkdir -p ~/.config
 chmod 700 ~/.config
-printf 'REFRESH_SECONDS=1200\nINKY_BUTTON_GPIO_PINS=5\nOPENAI_API_KEY=your_api_key_here\n' > ~/.config/inky-image-display.env
+printf 'REFRESH_SECONDS=1200\nINKY_BUTTON_GPIO_PINS=5\nCAPTION_BOTTOM_MARGIN=16\n' > ~/.config/inky-image-display.env
 chmod 600 ~/.config/inky-image-display.env
 
 sudo mv ~/inky-image-display.service /etc/systemd/system/inky-image-display.service
@@ -78,7 +77,5 @@ Optional environment variables:
 - `NASA_IMAGE_OF_DAY_FEED`: NASA Image of the Day RSS feed URL
 - `REFRESH_SECONDS`: image rotation interval, defaults to `1200`
 - `INKY_BUTTON_GPIO_PINS`: comma-separated BCM GPIO pins that advance the image, defaults to `5`
-- `OPENAI_API_KEY`: API key used to generate captions from the feed description
-- `OPENAI_MODEL`: OpenAI model used for captions, defaults to `gpt-4.1-mini`
 - `MAX_ATTEMPTS`: failed image downloads before sleeping, defaults to `10`
-- `CAPTION_BOTTOM_MARGIN`: pixels between caption text and the bottom frame edge, defaults to `8`
+- `CAPTION_BOTTOM_MARGIN`: pixels between caption text and the bottom frame edge, defaults to `16`; increase it to shift text up
