@@ -25,6 +25,7 @@ REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", "1200"))
 BUTTON_GPIO_PINS = os.environ.get("INKY_BUTTON_GPIO_PINS", "5")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
 MAX_ATTEMPTS = int(os.environ.get("MAX_ATTEMPTS", "10"))
+CAPTION_BOTTOM_MARGIN = int(os.environ.get("CAPTION_BOTTOM_MARGIN", "8"))
 
 advance_requested = threading.Event()
 display = auto()
@@ -53,6 +54,12 @@ def clean_description(value):
     return " ".join(html.unescape(value).split())
 
 
+def clean_credit(value):
+    value = clean_description(value)
+    value = re.sub(r"^(image|photo)?\s*credits?:\s*", "", value, flags=re.I)
+    return value.strip(" .;-")
+
+
 def feed_date(value):
     try:
         return parsedate_to_datetime(value).date().isoformat()
@@ -77,6 +84,21 @@ def image_url(item):
     return match.group(1) if match else None
 
 
+def image_credit(item, description):
+    for element in item.iter():
+        tag = element.tag.rsplit("}", 1)[-1].lower()
+        if tag in {"credit", "creator", "copyright", "rights"} and element.text:
+            credit = clean_credit(element.text)
+            if credit:
+                return credit
+
+    match = re.search(r"(?:image|photo)?\s*credits?:\s*([^.;\n]+)", description, re.I)
+    if match:
+        return clean_credit(match.group(1))
+
+    return "NASA"
+
+
 def fetch_feed_images():
     log(f"NASA feed: {NASA_FEED}")
     with get_url(NASA_FEED) as response:
@@ -96,6 +118,7 @@ def fetch_feed_images():
                 "date": feed_date(text_from(item, "pubDate")),
                 "title": title,
                 "description": description,
+                "credit": image_credit(item, description),
                 "url": url,
             }
         )
@@ -199,7 +222,7 @@ def caption_for(image):
     if not caption:
         caption = image["title"]
 
-    return caption
+    return f"{image['date']} | {caption} | {image['credit']}"
 
 
 def caption_font():
@@ -225,9 +248,10 @@ def add_caption(img, text):
 
     text_box = draw.textbbox((0, 0), "Ag", font=font)
     text_height = text_box[3] - text_box[1]
-    box_height = text_height + padding * 2
-    draw.rectangle((0, HEIGHT - box_height, WIDTH, HEIGHT), fill=(0, 0, 0))
-    draw.text((padding, HEIGHT - box_height + padding), text, fill=(255, 255, 255), font=font)
+    box_height = text_height + padding * 2 + CAPTION_BOTTOM_MARGIN
+    y0 = max(0, HEIGHT - box_height)
+    draw.rectangle((0, y0, WIDTH, HEIGHT), fill=(0, 0, 0))
+    draw.text((padding, y0 + padding), text, fill=(255, 255, 255), font=font)
     return img
 
 

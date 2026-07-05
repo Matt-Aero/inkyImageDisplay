@@ -7,6 +7,7 @@ The script:
 - fetches recent NASA Image of the Day feed entries
 - displays each image full-screen on the Inky display
 - asks OpenAI for a short caption from the image description
+- displays the photo date, caption, and image credit on one line
 - advances every 20 minutes
 - advances early when button A is pressed
 - streams image downloads to a temp file before resizing for the display
@@ -80,3 +81,4 @@ Optional environment variables:
 - `OPENAI_API_KEY`: API key used to generate captions from the feed description
 - `OPENAI_MODEL`: OpenAI model used for captions, defaults to `gpt-4.1-mini`
 - `MAX_ATTEMPTS`: failed image downloads before sleeping, defaults to `10`
+- `CAPTION_BOTTOM_MARGIN`: pixels between caption text and the bottom frame edge, defaults to `8`
