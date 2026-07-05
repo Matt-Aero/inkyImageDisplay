@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-import io
+import gc
+import html
+import json
 import os
+import random
 import re
+import tempfile
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -12,278 +16,299 @@ from urllib.request import Request, urlopen
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from inky.auto import auto
 
-NASA_APP_NAME = os.environ.get("NASA_APP_NAME", "raspberrypi-image-frame")
-NASA_IMAGE_OF_DAY_FEED = os.environ.get(
+NASA_FEED = os.environ.get(
     "NASA_IMAGE_OF_DAY_FEED",
     "https://www.nasa.gov/rss/dyn/lg_image_of_the_day.rss",
 )
-REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", "30"))
-MAX_ATTEMPTS = 10
-BUTTON_GPIO_PINS = os.environ.get(
-    "INKY_BUTTON_GPIO_PINS",
-    os.environ.get("INKY_BUTTON_A_GPIO", "5"),
-)
-CAPTION_MAX_CHARS = int(os.environ.get("CAPTION_MAX_CHARS", "80"))
+APP_NAME = os.environ.get("NASA_APP_NAME", "raspberrypi-image-frame")
+REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", "1200"))
+BUTTON_GPIO_PINS = os.environ.get("INKY_BUTTON_GPIO_PINS", "5")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+MAX_ATTEMPTS = int(os.environ.get("MAX_ATTEMPTS", "10"))
 
 advance_requested = threading.Event()
-
 display = auto()
 WIDTH, HEIGHT = display.resolution
+Image.MAX_IMAGE_PIXELS = None
 
 
-def make_request(url: str):
-    req = Request(
-        url,
-        headers={
-            "Accept": "application/rss+xml,application/xml,text/xml,image/jpeg,image/png,*/*",
-            "User-Agent": NASA_APP_NAME,
-        },
+def log(message):
+    print(message, flush=True)
+
+
+def get_url(url):
+    return urlopen(
+        Request(url, headers={"User-Agent": APP_NAME}),
+        timeout=60,
     )
-    return urlopen(req, timeout=60)
 
 
-def fetch_text(url: str) -> str:
-    with make_request(url) as response:
-        body = response.read()
-        charset = response.headers.get_content_charset() or "utf-8"
-        return body.decode(charset, errors="replace")
-
-
-def fetch_image(url: str) -> Image.Image:
-    with make_request(url) as response:
-        data = io.BytesIO(response.read())
-
-    img = Image.open(data)
-    img.draft("RGB", (WIDTH * 2, HEIGHT * 2))
-    img = ImageOps.exif_transpose(img)
-    img.thumbnail((WIDTH, HEIGHT), Image.LANCZOS)
-    return img.convert("RGB")
-
-
-def first_text(item: ET.Element, tag: str) -> str:
+def text_from(item, tag):
     child = item.find(tag)
     return (child.text or "").strip() if child is not None else ""
 
 
-def format_feed_date(value: str) -> str:
-    if not value:
-        return "unknown date"
+def clean_description(value):
+    value = re.sub(r"<[^>]+>", " ", value)
+    return " ".join(html.unescape(value).split())
+
+
+def feed_date(value):
     try:
         return parsedate_to_datetime(value).date().isoformat()
-    except (TypeError, ValueError, IndexError, OverflowError):
-        return value[:16]
+    except Exception:
+        return value[:16] if value else "unknown date"
 
 
-def image_url_from_item(item: ET.Element) -> str | None:
-    thumbnail_url = None
-    fallback_url = None
-
+def image_url(item):
     for element in item.iter():
+        url = element.attrib.get("url", "")
         tag = element.tag.rsplit("}", 1)[-1].lower()
-        url = element.attrib.get("url")
-        if not url:
-            continue
-        if tag == "thumbnail":
-            thumbnail_url = url
-        elif re.search(r"\.(jpe?g|png)(\?|$)", url, re.IGNORECASE):
-            fallback_url = fallback_url or url
-
-    if thumbnail_url:
-        return thumbnail_url
-
-    for enclosure in item.findall("enclosure"):
-        url = enclosure.attrib.get("url")
-        mime_type = enclosure.attrib.get("type", "")
-        if url and mime_type.startswith("image/"):
+        if url and tag == "thumbnail":
             return url
 
-    if fallback_url:
-        return fallback_url
+    for enclosure in item.findall("enclosure"):
+        url = enclosure.attrib.get("url", "")
+        if url and enclosure.attrib.get("type", "").startswith("image/"):
+            return url
 
-    html = first_text(item, "description")
-    match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', html, re.IGNORECASE)
-    if match:
-        return match.group(1)
-
-    return None
+    description = text_from(item, "description")
+    match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', description, re.I)
+    return match.group(1) if match else None
 
 
-def fetch_recent_images():
-    print(f"NASA Image of the Day feed: {NASA_IMAGE_OF_DAY_FEED}")
-    root = ET.fromstring(fetch_text(NASA_IMAGE_OF_DAY_FEED))
+def fetch_feed_images():
+    log(f"NASA feed: {NASA_FEED}")
+    with get_url(NASA_FEED) as response:
+        data = response.read()
+
     images = []
-
+    root = ET.fromstring(data)
     for item in root.findall(".//item"):
-        image_url = image_url_from_item(item)
-        if not image_url:
+        url = image_url(item)
+        if not url:
             continue
 
+        title = text_from(item, "title") or "NASA Image of the Day"
+        description = clean_description(text_from(item, "description")) or title
         images.append(
             {
-                "date": format_feed_date(first_text(item, "pubDate")),
-                "title": first_text(item, "title") or "NASA Image of the Day",
-                "image_url": image_url,
+                "date": feed_date(text_from(item, "pubDate")),
+                "title": title,
+                "description": description,
+                "url": url,
             }
         )
 
     if not images:
-        raise RuntimeError("NASA returned no Image of the Day entries with image URLs.")
+        raise RuntimeError("NASA feed had no usable images.")
 
+    log(f"Feed images: {len(images)}")
     return images
 
 
-def fit_image_contain(img: Image.Image, target_w: int, target_h: int) -> Image.Image:
-    canvas = Image.new("RGB", (target_w, target_h), (0, 0, 0))
-    x = (target_w - img.width) // 2
-    y = (target_h - img.height) // 2
-    canvas.paste(img, (x, y))
+def make_random_queue(images):
+    indexes = list(range(len(images)))
+    random.SystemRandom().shuffle(indexes)
+    return indexes
+
+
+def download_image(url):
+    log(f"Image URL: {url}")
+    with tempfile.TemporaryFile() as image_file:
+        with get_url(url) as response:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                image_file.write(chunk)
+
+        image_file.seek(0)
+        img = Image.open(image_file)
+        img.draft("RGB", (WIDTH * 2, HEIGHT * 2))
+        img = ImageOps.exif_transpose(img)
+        img.thumbnail((WIDTH, HEIGHT), Image.LANCZOS)
+        return img.convert("RGB")
+
+
+def fit_to_screen(img):
+    canvas = Image.new("RGB", (WIDTH, HEIGHT), (0, 0, 0))
+    canvas.paste(img, ((WIDTH - img.width) // 2, (HEIGHT - img.height) // 2))
     return canvas
 
 
-def load_caption_font(size: int):
-    for font_path in (
+def openai_caption(description):
+    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAPI_API_KEY")
+    if not api_key:
+        log("OpenAI caption skipped: OPENAI_API_KEY is not set")
+        return None
+
+    prompt = (
+        "Write a vivid image caption. Use no more than 8 words. "
+        "Return only the caption, with no quotes or punctuation-only lines.\n\n"
+        f"Image description: {description}"
+    )
+    body = json.dumps(
+        {
+            "model": OPENAI_MODEL,
+            "input": prompt,
+            "max_output_tokens": 24,
+            "temperature": 0.7,
+        }
+    ).encode("utf-8")
+
+    request = Request(
+        "https://api.openai.com/v1/responses",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": APP_NAME,
+        },
+        method="POST",
+    )
+
+    with urlopen(request, timeout=30) as response:
+        result = json.loads(response.read().decode("utf-8"))
+
+    caption = response_text(result).strip().strip('"') or None
+    if caption:
+        log(f"OpenAI caption: {caption}")
+    return caption
+
+
+def response_text(result):
+    if result.get("output_text"):
+        return result["output_text"]
+
+    for item in result.get("output", []):
+        for content in item.get("content", []):
+            if content.get("type") == "output_text":
+                return content.get("text", "")
+
+    return ""
+
+
+def caption_for(image):
+    try:
+        caption = openai_caption(image["description"])
+    except Exception as exc:
+        log(f"OpenAI caption failed, using feed title: {exc}")
+        caption = None
+
+    if not caption:
+        caption = image["title"]
+
+    return caption
+
+
+def caption_font():
+    for path in (
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ):
         try:
-            return ImageFont.truetype(font_path, size)
+            return ImageFont.truetype(path, max(10, min(15, WIDTH // 60)))
         except OSError:
             pass
     return ImageFont.load_default()
 
 
-def text_size(draw: ImageDraw.ImageDraw, text: str, font) -> tuple[int, int]:
-    bbox = draw.textbbox((0, 0), text, font=font)
-    return bbox[2] - bbox[0], bbox[3] - bbox[1]
-
-
-def add_caption(img: Image.Image, apod) -> Image.Image:
-    img = img.convert("RGB")
+def add_caption(img, text):
     draw = ImageDraw.Draw(img)
-
-    font_size = max(12, min(18, WIDTH // 48))
-    font = load_caption_font(font_size)
+    font = caption_font()
     padding = max(8, WIDTH // 80)
-    max_text_width = WIDTH - (padding * 2)
+    text = f"{text}"
 
-    date_text = str(apod["date"])
-    title = " ".join(apod.get("title", "NASA Image of the Day").split())
-    if len(title) > CAPTION_MAX_CHARS:
-        title = title[: CAPTION_MAX_CHARS - 3].rstrip(". ,;:") + "..."
-    caption = f"{date_text} - {title}"
+    while draw.textbbox((0, 0), text, font=font)[2] > WIDTH - padding * 2 and len(text) > 4:
+        text = text[:-4].rstrip() + "..."
 
-    while text_size(draw, caption, font)[0] > max_text_width and len(caption) > len(date_text) + 6:
-        caption = caption[:-4].rstrip(". ,;:-") + "..."
-
-    text_height = text_size(draw, "Ag", font)[1]
-    box_height = text_height + (padding * 2)
-    x0 = 0
-    y0 = max(0, HEIGHT - box_height)
-    x1 = WIDTH - 1
-    y1 = HEIGHT - 1
-
-    draw.rectangle((x0, y0, x1, y1), fill=(0, 0, 0))
-    draw.line((x0, y0, x1, y0), fill=(255, 255, 255), width=1)
-
-    text_y = y0 + padding
-    draw.text((x0 + padding, text_y), caption, fill=(255, 255, 255), font=font)
-
+    text_box = draw.textbbox((0, 0), "Ag", font=font)
+    text_height = text_box[3] - text_box[1]
+    box_height = text_height + padding * 2
+    draw.rectangle((0, HEIGHT - box_height, WIDTH, HEIGHT), fill=(0, 0, 0))
+    draw.text((padding, HEIGHT - box_height + padding), text, fill=(255, 255, 255), font=font)
     return img
 
 
-def parse_button_pins() -> list[int]:
-    pins = []
-    for raw_pin in BUTTON_GPIO_PINS.split(","):
-        raw_pin = raw_pin.strip()
-        if not raw_pin:
-            continue
-        pins.append(int(raw_pin))
-    return pins
+def display_image(image):
+    log(f"Fetching: {image['date']} - {image['title']}")
+    img = fit_to_screen(download_image(image["url"]))
+    img = add_caption(img, caption_for(image))
+
+    display.set_image(img)
+    del img
+    gc.collect()
+    display.show()
+    log(f"Displayed: {image['date']} - {image['title']}")
 
 
 def setup_buttons():
     try:
         from gpiozero import Button
     except Exception as exc:
-        print(f"Buttons disabled: {exc}")
+        log(f"Buttons disabled: {exc}")
         return []
 
     buttons = []
-    enabled_pins = []
-    for pin in parse_button_pins():
-        try:
-            button = Button(pin, pull_up=True, bounce_time=0.08)
-            button.when_pressed = lambda pressed_pin=pin: request_advance(pressed_pin)
-            buttons.append(button)
-            enabled_pins.append(pin)
-        except Exception as exc:
-            print(f"Button on BCM GPIO {pin} disabled: {exc}")
+    for raw_pin in BUTTON_GPIO_PINS.split(","):
+        raw_pin = raw_pin.strip()
+        if not raw_pin:
+            continue
 
-    if enabled_pins:
-        print(f"Buttons enabled on BCM GPIO pins: {', '.join(str(pin) for pin in enabled_pins)}")
-    else:
-        print("No buttons enabled.")
+        pin = int(raw_pin)
+        button = Button(pin, pull_up=True, bounce_time=0.08)
+        button.when_pressed = lambda pressed_pin=pin: request_advance(pressed_pin)
+        buttons.append(button)
 
+    if buttons:
+        log(f"Buttons enabled on BCM GPIO pins: {BUTTON_GPIO_PINS}")
     return buttons
 
 
-def request_advance(pin: int) -> None:
-    print(f"Button press detected on BCM GPIO {pin}")
+def request_advance(pin):
+    log(f"Button press on BCM GPIO {pin}")
     advance_requested.set()
 
 
-def wait_for_next_refresh() -> None:
-    deadline = time.monotonic() + REFRESH_SECONDS
+def wait_for_refresh():
     advance_requested.clear()
-
-    while time.monotonic() < deadline:
-        if advance_requested.is_set():
-            return
+    deadline = time.monotonic() + REFRESH_SECONDS
+    while time.monotonic() < deadline and not advance_requested.is_set():
         time.sleep(0.05)
 
 
-def display_nasa_image(nasa_image):
-    print(f"Fetching: {nasa_image['date']} - {nasa_image['title']}")
-    img = fetch_image(nasa_image["image_url"])
-    img = fit_image_contain(img, WIDTH, HEIGHT)
-    img = add_caption(img, nasa_image)
-
-    display.set_image(img.convert("RGB"))
-    display.show()
-    print(f"Displayed: {nasa_image['date']} - {nasa_image['title']}")
-
-
-def render_with_retries(images, index: int) -> int:
-    last_error = None
-
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        nasa_image = images[index % len(images)]
-        try:
-            display_nasa_image(nasa_image)
-            return (index + 1) % len(images)
-        except (HTTPError, URLError, OSError) as exc:
-            last_error = exc
-            print(f"Attempt {attempt}/{MAX_ATTEMPTS} failed: {exc}")
-            index = (index + 1) % len(images)
-            time.sleep(1)
-
-    raise RuntimeError(f"Could not fetch a valid NASA Image of the Day image: {last_error}")
-
-
 def main():
-    buttons = setup_buttons()
-    images = fetch_recent_images()
-    index = 0
+    setup_buttons()
+    images = fetch_feed_images()
+    queue = make_random_queue(images)
 
     while True:
         try:
-            index = render_with_retries(images, index)
-            wait_for_next_refresh()
+            if not queue:
+                images = fetch_feed_images()
+                queue = make_random_queue(images)
 
-            if index == 0:
-                images = fetch_recent_images()
+            last_error = None
+            for attempt in range(1, MAX_ATTEMPTS + 1):
+                if not queue:
+                    queue = make_random_queue(images)
+
+                image = images[queue.pop(0)]
+                try:
+                    display_image(image)
+                    break
+                except (HTTPError, URLError, OSError, MemoryError) as exc:
+                    last_error = exc
+                    log(f"Attempt {attempt}/{MAX_ATTEMPTS} failed: {exc}")
+                    gc.collect()
+                    time.sleep(1)
+            else:
+                raise RuntimeError(f"Could not display a NASA image: {last_error}")
+
+            wait_for_refresh()
         except Exception as exc:
-            print(f"Error: {exc}")
+            log(f"Error: {exc}")
             time.sleep(REFRESH_SECONDS)
 
 

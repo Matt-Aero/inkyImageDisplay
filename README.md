@@ -6,10 +6,11 @@ The script:
 
 - fetches recent NASA Image of the Day feed entries
 - displays each image full-screen on the Inky display
-- overlays the image date and title in a small single-line caption
-- advances every 30 seconds
+- asks OpenAI for a short caption from the image description
+- advances every 20 minutes
 - advances early when button A is pressed
-- prefers smaller feed thumbnails to keep memory use low on Raspberry Pi
+- streams image downloads to a temp file before resizing for the display
+- shuffles the feed and cycles through every entry before reshuffling
 
 ## Raspberry Pi Setup
 
@@ -56,7 +57,7 @@ Then SSH into the Pi and install the service:
 ```bash
 mkdir -p ~/.config
 chmod 700 ~/.config
-printf 'REFRESH_SECONDS=30\nINKY_BUTTON_GPIO_PINS=5\n' > ~/.config/inky-image-display.env
+printf 'REFRESH_SECONDS=1200\nINKY_BUTTON_GPIO_PINS=5\nOPENAI_API_KEY=your_api_key_here\n' > ~/.config/inky-image-display.env
 chmod 600 ~/.config/inky-image-display.env
 
 sudo mv ~/inky-image-display.service /etc/systemd/system/inky-image-display.service
@@ -74,7 +75,8 @@ journalctl -u inky-image-display.service -f
 Optional environment variables:
 
 - `NASA_IMAGE_OF_DAY_FEED`: NASA Image of the Day RSS feed URL
-- `REFRESH_SECONDS`: image rotation interval, defaults to `30`
+- `REFRESH_SECONDS`: image rotation interval, defaults to `1200`
 - `INKY_BUTTON_GPIO_PINS`: comma-separated BCM GPIO pins that advance the image, defaults to `5`
-- `INKY_BUTTON_A_GPIO`: legacy single BCM GPIO pin setting, used only if `INKY_BUTTON_GPIO_PINS` is unset
-- `CAPTION_MAX_CHARS`: maximum title characters in the caption, defaults to `80`
+- `OPENAI_API_KEY`: API key used to generate captions from the feed description
+- `OPENAI_MODEL`: OpenAI model used for captions, defaults to `gpt-4.1-mini`
+- `MAX_ATTEMPTS`: failed image downloads before sleeping, defaults to `10`
